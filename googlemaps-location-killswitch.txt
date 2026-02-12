@@ -1,0 +1,6 @@
+! Title: Google Maps Kill Switch (Aggressive)
+! Description: Aggressively breaks Google Maps networking, likely stops Location Sharing updates.
+! Expires: 1 day
+
+||maps.googleapis.com^
+||maps.gstatic.com^
