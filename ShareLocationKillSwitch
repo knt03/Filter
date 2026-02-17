@@ -12,3 +12,7 @@
 ||fmfmobile.icloud.com^
 ||fmfmobile.fe2.apple-dns.net^
 ||socialuserlocation.googleapis.com^
+||fmfmobile.fe2.apple-dns.net^
+||fmipmobile.fe2.apple-dns.net^
+/^p\d+-fmfmobile\.icloud\.com$/
+/^p\d+-fmipmobile\.icloud\.com$/
