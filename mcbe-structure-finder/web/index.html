@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>統合版 構造物座標帳</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=DotGothic16&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+/* 配置: 左に入力・種類の一覧・地図、右に座標の台帳。スマホでは縦に並ぶ */
+:root {
+  --bg: #eef2ee;
+  --surface: #fbfcfa;
+  --sunk: #e3e9e4;
+  --ink: #16201b;
+  --muted: #56645c;
+  --line: #cfd8d1;
+  --accent: #0d7454;
+  --accent-ink: #ffffff;
+  --est: #8a5a00;
+  --map-bg: #dfe6e0;
+  --map-dim: 0.55;
+  --g1: #2a78d6;
+  --g2: #eb6834;
+  --g3: #1baf7a;
+  --g4: #eda100;
+  --g5: #e87ba4;
+  --font-display: "DotGothic16", "BIZ UDPGothic", "Hiragino Sans", "Yu Gothic", sans-serif;
+  --font-body: "BIZ UDPGothic", "Hiragino Sans", "Yu Gothic", "Noto Sans JP", system-ui, sans-serif;
+  --font-num: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #101512; --surface: #171e1a; --sunk: #1f2823; --ink: #e6ece7; --muted: #9aa8a0;
+    --line: #2d3832; --accent: #3cc193; --accent-ink: #062619; --est: #e5ac4b;
+    --map-bg: #1c241f; --map-dim: 0.42;
+    --g1: #3987e5; --g2: #d95926; --g3: #199e70; --g4: #c98500; --g5: #d55181;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #101512; --surface: #171e1a; --sunk: #1f2823; --ink: #e6ece7; --muted: #9aa8a0;
+  --line: #2d3832; --accent: #3cc193; --accent-ink: #062619; --est: #e5ac4b;
+  --map-bg: #1c241f; --map-dim: 0.42;
+  --g1: #3987e5; --g2: #d95926; --g3: #199e70; --g4: #c98500; --g5: #d55181;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.6 var(--font-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 48px;
+}
+button, input, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.page { max-width: 1240px; margin: 0 auto; display: grid; gap: 20px; }
+@media (min-width: 960px) {
+  .page { grid-template-columns: minmax(0, 470px) minmax(0, 1fr); align-items: start; }
+  .side { position: sticky; top: max(12px, env(safe-area-inset-top, 0px)); }
+}
+.side, .ledger { display: grid; gap: 16px; min-width: 0; }
+
+header h1 {
+  font: 400 clamp(26px, 6vw, 34px)/1.15 var(--font-display);
+  margin: 0;
+  letter-spacing: 0.02em;
+  text-wrap: balance;
+}
+header p { margin: 6px 0 0; color: var(--muted); font-size: 13.5px; }
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+}
+.label {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+/* 入力 */
+form { display: grid; gap: 12px; }
+.field { display: grid; gap: 4px; min-width: 0; }
+.field input, .field select {
+  width: 100%;
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+#seed { font-family: var(--font-num); font-size: 16px; }
+.row2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; }
+.go {
+  min-height: 46px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
+  font-size: 16px;
+  cursor: pointer;
+}
+.go:disabled { opacity: 0.6; cursor: progress; }
+.status { font-size: 13px; color: var(--muted); min-height: 1.6em; }
+.status strong { color: var(--ink); font-family: var(--font-num); font-weight: 500; }
+.bar { height: 4px; border-radius: 2px; background: var(--sunk); overflow: hidden; }
+.bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 0.15s; }
+
+/* 種類ごとの件数 (絞り込みを兼ねる凡例) */
+.groups { display: grid; gap: 10px; }
+.group { display: grid; gap: 6px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-height: 34px;
+  padding: 4px 10px 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg);
+  cursor: pointer;
+  font-size: 13.5px;
+}
+.chip[aria-pressed="false"] { opacity: 0.45; }
+.chip[aria-pressed="false"] .mark { filter: grayscale(1); }
+.chip .n { font-family: var(--font-num); font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.chip .badge { font-size: 10.5px; color: var(--est); border: 1px solid currentColor; border-radius: 4px; padding: 0 4px; line-height: 1.5; }
+.chip[disabled] { cursor: default; opacity: 0.3; }
+.badge-inline { font-size: 11px; color: var(--est); border: 1px solid currentColor; border-radius: 4px; padding: 0 4px; }
+.chip-tools { display: flex; gap: 8px; flex-wrap: wrap; }
+.ghost {
+  border: 1px solid var(--line); background: transparent; border-radius: 8px;
+  padding: 4px 10px; min-height: 32px; cursor: pointer; font-size: 13px; color: var(--muted);
+}
+
+/* 印: 集落=丸 神殿=四角 海=三角 地下=ひし形 その他=十字 */
+.mark { width: 12px; height: 12px; flex: none; background: var(--c); display: inline-block; }
+.mark[data-shape="circle"] { border-radius: 50%; }
+.mark[data-shape="square"] { border-radius: 2px; }
+.mark[data-shape="triangle"] { clip-path: polygon(50% 4%, 100% 96%, 0 96%); }
+.mark[data-shape="diamond"] { clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); }
+.mark[data-shape="plus"] { clip-path: polygon(35% 0, 65% 0, 65% 35%, 100% 35%, 100% 65%, 65% 65%, 65% 100%, 35% 100%, 35% 65%, 0 65%, 0 35%, 35% 35%); }
+
+/* 地図 */
+.map-wrap { position: relative; }
+#map {
+  display: block; width: 100%; aspect-ratio: 1 / 1; max-width: 100%;
+  border-radius: 8px; background: var(--map-bg); touch-action: none; cursor: grab;
+}
+.map-tools {
+  position: absolute; right: 8px; top: 8px; display: flex; flex-direction: column; gap: 6px;
+}
+.map-tools button {
+  width: 36px; height: 36px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--surface); cursor: pointer; font: 700 18px/1 var(--font-num);
+}
+.map-tools button.fit { font: 700 11px/1 var(--font-body); }
+.pick {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 4px 10px; align-items: center;
+  margin-top: 10px; font-size: 14px;
+}
+.pick[hidden] { display: none !important; }
+.pick .xz { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+.pick small { color: var(--muted); grid-column: 2 / 4; }
+.map-note { margin: 8px 0 0; font-size: 12px; color: var(--muted); }
+
+/* 台帳 */
+.ledger-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
+.ledger-head h2 { font: 400 20px/1.3 var(--font-display); margin: 0; }
+.ledger-tools { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.ledger-tools select { min-height: 34px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding: 2px 8px; }
+.rows { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); overflow: hidden; }
+.r {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto auto;
+  gap: 2px 12px;
+  align-items: center;
+  padding: 9px 12px;
+  border-top: 1px solid var(--line);
+  cursor: pointer;
+}
+.r:first-child { border-top: 0; }
+.r:hover, .r.sel { background: var(--sunk); }
+.r .what { min-width: 0; display: grid; }
+.r .what b { font-weight: 700; font-size: 14.5px; }
+.r .what small { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.r .xz { font-family: var(--font-num); font-size: 14px; font-variant-numeric: tabular-nums; text-align: right; display: grid; line-height: 1.35; }
+.r .xz span:last-child { color: var(--muted); }
+.r .xz em { font-style: normal; color: var(--muted); font-size: 11px; margin-right: 4px; }
+.tp {
+  min-width: 44px; min-height: 36px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--bg); cursor: pointer; font: 500 12px/1 var(--font-num); color: var(--muted);
+}
+.tp.done { color: var(--accent); border-color: var(--accent); }
+.dist { color: var(--muted); font-size: 12px; }
+.more { width: 100%; }
+.empty { padding: 28px 16px; text-align: center; color: var(--muted); }
+
+.notes { font-size: 13.5px; color: var(--muted); }
+.notes h3 { font: 700 14px/1.4 var(--font-body); color: var(--ink); margin: 0 0 6px; }
+.notes ul { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; }
+.notes b { color: var(--ink); }
+#csvbox { width: 100%; min-height: 120px; font: 12px/1.4 var(--font-num); border: 1px solid var(--line); border-radius: 8px; background: var(--bg); padding: 8px; }
+
+@media (prefers-reduced-motion: reduce) { .bar i { transition: none; } }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="side">
+    <header>
+      <h1>統合版 構造物座標帳</h1>
+      <p>Minecraft 統合版のシード値から、スポーン地点（原点）の周り ±10000 にある村・要塞・ピラミッド・海底神殿などの座標を全部書き出します。非公式ツール。</p>
+    </header>
+
+    <form class="panel" id="form" autocomplete="off">
+      <div class="field">
+        <label class="label" for="seed">シード値（数字または文字）</label>
+        <input id="seed" name="seed" inputmode="text" placeholder="例: -1234567890" required>
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label class="label" for="version">バージョン</label>
+          <select id="version"></select>
+        </div>
+        <div class="field">
+          <label class="label" for="range">範囲（±ブロック）</label>
+          <input id="range" type="number" inputmode="numeric" min="500" max="30000" step="500" value="10000">
+        </div>
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label class="label" for="cx">中心 X</label>
+          <input id="cx" type="number" inputmode="numeric" value="0">
+        </div>
+        <div class="field">
+          <label class="label" for="cz">中心 Z</label>
+          <input id="cz" type="number" inputmode="numeric" value="0">
+        </div>
+      </div>
+      <button class="go" id="go" type="submit">計算する</button>
+      <div class="bar" aria-hidden="true"><i id="bar"></i></div>
+      <div class="status" id="status" role="status">準備中…</div>
+    </form>
+
+    <section class="panel" aria-labelledby="kinds-h">
+      <div class="ledger-head">
+        <span class="label" id="kinds-h">種類（タップで表示を切り替え）</span>
+        <div class="chip-tools">
+          <button class="ghost" type="button" id="all-on">全部</button>
+          <button class="ghost" type="button" id="main-on">主要だけ</button>
+        </div>
+      </div>
+      <div class="groups" id="groups"></div>
+    </section>
+
+    <section class="panel" aria-label="地図">
+      <div class="map-wrap">
+        <canvas id="map" aria-label="構造物の地図。ドラッグで移動、ホイールやピンチで拡大"></canvas>
+        <div class="map-tools">
+          <button type="button" id="zin" aria-label="拡大">+</button>
+          <button type="button" id="zout" aria-label="縮小">−</button>
+          <button type="button" class="fit" id="zfit" aria-label="全体を表示">全体</button>
+        </div>
+      </div>
+      <div class="pick" id="pick" hidden></div>
+      <p class="map-note">上が北（Z−）、右が東（X＋）。＋印が原点。地図をタップすると近くの構造物を表示します。</p>
+    </section>
+  </div>
+
+  <main class="ledger">
+    <div class="ledger-head">
+      <h2 id="ledger-h">座標一覧</h2>
+      <div class="ledger-tools">
+        <label class="label" for="sort">並び順</label>
+        <select id="sort">
+          <option value="dist">中心から近い順</option>
+          <option value="kind">種類ごと</option>
+          <option value="x">X の小さい順</option>
+          <option value="z">Z の小さい順</option>
+        </select>
+        <button class="ghost" type="button" id="copy-csv">表示中を CSV でコピー</button>
+      </div>
+    </div>
+    <textarea id="csvbox" hidden readonly aria-label="CSV"></textarea>
+    <ul class="rows" id="rows"><li class="empty">シード値を入れて「計算する」を押してください。</li></ul>
+    <button class="ghost more" type="button" id="more" hidden>さらに表示</button>
+
+    <section class="panel notes" aria-labelledby="notes-h">
+      <h3 id="notes-h">座標の確かさ</h3>
+      <ul>
+        <li><b>村・砂漠のピラミッド・ジャングルの寺院・ウィッチの小屋・イグルー・試練の間</b>は、実機や Chunkbase で確かめられた座標と一致することを確認済みです。</li>
+        <li><span class="badge-inline">推定</span> の付いた種類は、場所の計算式は複数の解析ツールで一致していますが、「そのバイオームで本当にできるか」の条件に推定が入ります。まれに、行ってみたら無い・一覧に無いのにある、ということがあります。</li>
+        <li><b>要塞</b>は統合版では 2 種類あります。原点の近くで<b>村の下に必ずできる 3 つ</b>はここに出ます。それ以外にもランダムにできますが、その計算式は公開されていないため出せません。エンダーアイで探してください。</li>
+        <li>座標は構造物の中心チャンクの中央です。大きな構造物では入口まで数十ブロック離れていることがあります。高さ（Y）は出せないので、地下のものは目安の高さを地図の詳細に書いています。</li>
+        <li>統合版の最初のスポーン地点は原点（0, 0）付近です。別の場所を中心にしたいときは「中心 X / Z」を変えてください。</li>
+        <li>地形とバイオームは 1.18 以降 Java 版と同じ計算なので、cubiomes（Java 版の地形計算ライブラリ）を使っています。</li>
+      </ul>
+    </section>
+  </main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
