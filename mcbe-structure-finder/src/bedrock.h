@@ -35,6 +35,13 @@ enum BEKind {
     BE_FORTRESS,         // ネザー要塞
     BE_BASTION,          // 砦の遺跡 (info: 0 橋, 1 宝物庫, 2 ホグリン小屋, 3 住居)
     BE_SLIME_CHUNK,      // スライムチャンク (シード値によらない)
+    BE_GEODE,            // ジオード (info: 中心の Y)
+    BE_FOSSIL,           // 化石 (info: 種類 0 石炭 / 1 深層岩 + 2 × (規則の Y + 64))
+    BE_NETHER_FOSSIL,    // ネザーの化石 (info: この高さ以下)
+    BE_END_CITY,         // エンドシティ (info: 土台の Y)
+    BE_END_SHIP,         // エンドシップ。位置はエリトラの額縁 (info: その Y)
+    BE_END_GATEWAY,      // 中央の島のエンドゲートウェイ (info: ドラゴンを倒した何回目にできるか)
+    BE_END_GATEWAY_OUTER,  // 外側の島に自然にできるエンドゲートウェイ (info: Y)
     BE_KIND_NUM
 };
 
@@ -50,7 +57,9 @@ typedef struct {
 } BEHit;
 
 // シード値と cubiomes のバージョン定数 (MC_1_18 以降) で初期化する。0 で成功。
-int be_setup(uint64_t seed, int mc);
+// bv は統合版のバージョン (1.21.90 なら 12190、26.50 なら 265000)。cubiomes の
+// バージョンでは分けられない違い (ネザーの化石の規則) に使う。0 なら mc から決める。
+int be_setup(uint64_t seed, int mc, int bv);
 
 // その種類がこのバージョンに存在するか。
 int be_kind_available(int kind);

@@ -7,9 +7,9 @@ static int buf[BUF_INTS];
 
 int *wasm_buffer(void) { return buf; }
 
-int wasm_setup(uint32_t seed_lo, uint32_t seed_hi, int mc)
+int wasm_setup(uint32_t seed_lo, uint32_t seed_hi, int mc, int bv)
 {
-    return be_setup(((uint64_t)seed_hi << 32) | seed_lo, mc);
+    return be_setup(((uint64_t)seed_hi << 32) | seed_lo, mc, bv);
 }
 
 int wasm_available(int kind) { return be_kind_available(kind); }

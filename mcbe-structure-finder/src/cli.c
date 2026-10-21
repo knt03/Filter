@@ -15,7 +15,8 @@ static const char *KIND_NAMES[BE_KIND_NUM] = {
     "海底神殿", "森の洋館", "ピリジャーの前哨基地", "難破船", "海底遺跡",
     "埋もれた宝", "荒廃したポータル", "古代都市", "旅路の遺跡", "試練の間",
     "放棄されたキャンプ", "廃坑", "要塞", "砂漠の井戸", "ネザー要塞",
-    "砦の遺跡", "スライムチャンク",
+    "砦の遺跡", "スライムチャンク", "ジオード", "化石", "ネザーの化石",
+    "エンドシティ", "エンドシップ", "エンドゲートウェイ", "エンドゲートウェイ（外側の島）",
 };
 
 typedef struct { int kind; BEHit hit; double dist; } Row;
@@ -74,7 +75,7 @@ int main(int argc, char **argv)
             return 1;
         }
     }
-    if (be_setup(seed, mc) != 0) {
+    if (be_setup(seed, mc, 0) != 0) {
         fprintf(stderr, "unsupported version (1.18 or later)\n");
         return 1;
     }

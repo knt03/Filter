@@ -36,8 +36,28 @@ const KINDS = [
     info: (t) => `形: ${BASTIONS[t]}` },
   { name: 'スライムチャンク', group: 4, conf: 'ok', y: 'Y 39 以下（明るさに関係なく湧く）', color: '--g3',
     chunk: true, lazy: true, parts: 24 },
+  { name: 'ジオード', group: 3, conf: 'est', y: '地下', shape: 'triangle', color: '--g5',
+    lazy: true, parts: 24, info: (y) => `中心 Y ${y}` },
+  { name: '化石', group: 3, conf: 'est', y: '地下', shape: 'square', color: '--g3',
+    lazy: true, parts: 12, info: fossilText },
+  { name: 'ネザーの化石', group: 6, dim: 1, conf: 'ref', y: 'ソウルサンドの谷の地面',
+    lazy: true, parts: 12, info: (y) => `Y ${y} 以下の地面` },
+  { name: 'エンドシティ', main: true, group: 7, dim: 2, conf: 'ok', y: '島の上', info: (y) => `土台 Y ${y}` },
+  { name: 'エンドシップ', main: true, group: 7, dim: 2, conf: 'ok', y: '空中（エンドシティの横）',
+    shape: 'triangle', color: '--g3', info: (y) => `エリトラの額縁 Y ${y}` },
+  { name: 'エンドゲートウェイ', main: true, group: 8, dim: 2, conf: 'ok', y: 'Y 75',
+    info: (k) => `${k} 回目の討伐で出現` },
+  { name: 'エンドゲートウェイ（外側の島）', group: 8, dim: 2, conf: 'ok', y: '島の上', shape: 'plus', color: '--g5',
+    lazy: true, parts: 48, info: (y) => `Y ${y} · 最初からある` },
 ];
 const BASTIONS = ['橋', '宝物庫', 'ホグリン小屋', '住居'];
+
+// 化石の info = 種類 (0 石炭, 1 深層岩) + 2 × (規則の Y + 64)
+function fossilText(v) {
+  const ry = (v >> 1) - 64;
+  if (v & 1) return `深層岩（ダイヤモンド鉱石入り） · Y ${Math.max(ry - 24, -54)}〜${Math.max(ry - 15, -54)}`;
+  return `石炭入り · ${ry < 62 ? `Y ${ry - 24}〜${ry - 15}` : '地表から 15〜24 ブロック下'}`;
+}
 // 種類のまとまり。印の形と色はまとまりごと (種類の shape / color で上書きできる)
 const GROUPS = [
   { name: '集落', shape: 'circle', color: '--g1' },
@@ -61,16 +81,18 @@ const NOISY = new Set(KINDS.map((k, i) => (k.noisy || k.lazy ? i : -1)).filter((
 // 重い種類は分けて計算して進捗を出す (±10000 のときの分割数)
 const PARTS = Object.fromEntries(KINDS.map((k, i) => [i, k.parts || 0]).filter(([, n]) => n));
 
-// 統合版のバージョン → cubiomes のバージョン定数 (biomes.h の MCVersion)
+// 統合版のバージョン → cubiomes のバージョン定数 (biomes.h の MCVersion) と、
+// 統合版のバージョンの数 (bv: 1.21.90 なら 12190。cubiomes では分けられない違いに使う)
 const VERSIONS = [
-  { label: '26.50 以降（最新）', mc: 35 },
-  { label: '26.30〜26.40', mc: 34 },
-  { label: '1.21.60〜26.2x', mc: 33 },
-  { label: '1.21.50', mc: 28 },
-  { label: '1.21.0〜1.21.40', mc: 27 },
-  { label: '1.20.x', mc: 25 },
-  { label: '1.19.x', mc: 24 },
-  { label: '1.18.x', mc: 22 },
+  { label: '26.50 以降（最新）', mc: 35, bv: 265000 },
+  { label: '26.30〜26.40', mc: 34, bv: 263000 },
+  { label: '1.21.90〜26.2x', mc: 33, bv: 12190 },
+  { label: '1.21.60〜1.21.80', mc: 33, bv: 12160 },
+  { label: '1.21.50', mc: 28, bv: 12150 },
+  { label: '1.21.0〜1.21.40', mc: 27, bv: 12100 },
+  { label: '1.20.x', mc: 25, bv: 12000 },
+  { label: '1.19.x', mc: 24, bv: 11900 },
+  { label: '1.18.x', mc: 22, bv: 11800 },
 ];
 
 // cubiomes のバイオーム ID → 日本語名
@@ -112,10 +134,11 @@ function engineMain(self) {
   let total = 0;
   let pumping = false;
   const pause = () => new Promise((r) => setTimeout(r, 0));
+  let left = {};  // 種類ごとの残りの帯の数
   const setup = (m) => {
-    const key = `${m.seedLo},${m.seedHi},${m.mc}`;
+    const key = `${m.seedLo},${m.seedHi},${m.mc},${m.bv}`;
     if (key !== current) {
-      ex.wasm_setup(m.seedLo, m.seedHi, m.mc);
+      ex.wasm_setup(m.seedLo, m.seedHi, m.mc, m.bv);
       current = key;
     }
   };
@@ -126,8 +149,13 @@ function engineMain(self) {
         self.postMessage({ op: 'missing', id: job.id, kind: k });
         continue;
       }
+      // 帯は真ん中から外へ順に計算して、近いものから出す
       const n = parts[k] || 1;
-      for (let p = 0; p < n; p++) queue.push([k, p, n]);
+      for (let i = 0; i < n; i++) {
+        const half = Math.floor((i + 1) / 2);
+        queue.push([k, Math.floor((n - 1) / 2) + (i % 2 ? half : -half), n]);
+      }
+      left[k] = n;
       total += n;
     }
   };
@@ -145,7 +173,8 @@ function engineMain(self) {
         self.postMessage({ op: 'hits', id: job.id, kind: k, data }, [data.buffer]);
       }
       done++;
-      self.postMessage({ op: 'progress', id: job.id, kind: k, last: p === n - 1, done, total });
+      left[k]--;
+      self.postMessage({ op: 'progress', id: job.id, kind: k, last: left[k] === 0, done, total });
       await pause();
     }
     pumping = false;
@@ -163,6 +192,7 @@ function engineMain(self) {
       } else if (m.op === 'run') {
         job = m;
         queue = [];
+        left = {};
         done = 0;
         total = 0;
         enqueue(m.kinds, m.parts);
@@ -260,6 +290,7 @@ const state = {
   running: false,
   seed: null,
   mc: VERSIONS[0].mc,
+  bv: VERSIONS[0].bv,
   cx: 0, cz: 0, range: 10000,
   dim: 0,                        // 表示している次元
   hits: KINDS.map(() => []),     // [{x, z, b, info, d}]
@@ -690,7 +721,7 @@ function requestFine() {
 function sendMap(dim, key, x0, z0, w, h, scale) {
   const id = ++map.mapId;
   map.want[`${dim}:${key}`] = id;
-  state.engine.postMessage({ op: 'map', id, key, dim, x0, z0, w, h, scale, ...seedParts(), mc: state.mc });
+  state.engine.postMessage({ op: 'map', id, key, dim, x0, z0, w, h, scale, ...seedParts(), mc: state.mc, bv: state.bv });
 }
 
 function onMapImage(m) {
@@ -834,7 +865,9 @@ function run() {
   const range = Math.min(30000, Math.max(500, Math.round(Number($('range').value) || 10000)));
   $('range').value = range;
   state.seed = seed;
-  state.mc = Number($('version').value);
+  const ver = VERSIONS[Number($('version').value)] || VERSIONS[0];
+  state.mc = ver.mc;
+  state.bv = ver.bv;
   state.cx = Math.round(Number($('cx').value) || 0);
   state.cz = Math.round(Number($('cz').value) || 0);
   state.range = range;
@@ -846,7 +879,7 @@ function run() {
   $('pick').hidden = true;
   if (!state.example) {
     store.set('mcbe.seed', $('seed').value.trim());
-    store.set('mcbe.version', String(state.mc));
+    store.set('mcbe.bv', String(state.bv));
   }
 
   const signed = BigInt.asIntN(64, seed).toString();
@@ -868,7 +901,7 @@ function run() {
     return [cx - range, cz - range, cx + range, cz + range];
   });
   state.engine.postMessage({
-    op: 'run', id: state.runId, ...seedParts(), mc: state.mc,
+    op: 'run', id: state.runId, ...seedParts(), mc: state.mc, bv: state.bv,
     rects, kdim: KINDS.map((_, i) => dimOf(i)), kinds: order, parts: partsFor(order),
   });
   map.bg = DIMS.map(() => ({ base: null, fine: null }));
@@ -931,9 +964,11 @@ $('form').addEventListener('submit', (e) => {
 });
 
 async function main() {
-  $('version').innerHTML = VERSIONS.map((v) => `<option value="${v.mc}">${v.label}</option>`).join('');
-  const savedVersion = store.get('mcbe.version');
-  if (savedVersion && VERSIONS.some((v) => String(v.mc) === savedVersion)) $('version').value = savedVersion;
+  $('version').innerHTML = VERSIONS.map((v, i) => `<option value="${i}">${v.label}</option>`).join('');
+  // 前は cubiomes のバージョン (mc) を覚えていた
+  const savedBv = store.get('mcbe.bv'), savedMc = store.get('mcbe.version');
+  const vi = VERSIONS.findIndex((v) => (savedBv ? String(v.bv) === savedBv : String(v.mc) === savedMc));
+  if (vi >= 0) $('version').value = String(vi);
   const savedEnabled = store.get('mcbe.enabled');
   if (savedEnabled !== null) {
     state.enabled = new Set(savedEnabled.split(',').filter(Boolean).map(Number).filter((k) => k >= 0 && k < KINDS.length));

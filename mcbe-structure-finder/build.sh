@@ -9,24 +9,24 @@ cd "$(dirname "$0")"
 V=vendor/cubiomes
 LIB="$V/biomes.c $V/biomenoise.c $V/finders.c $V/generator.c $V/layers.c $V/noise.c
      $V/util.c $V/terrainnoise.c $V/carver.c $V/features/*.c"
-CFLAGS="-O2 -I$V -Isrc -w"
+CFLAGS="-O2 -ffp-contract=off -I$V -Isrc -w"
 mkdir -p build
 
 case "${1:-cli}" in
 cli)
-    gcc $CFLAGS src/cli.c src/bedrock.c $LIB -lm -o build/mcbe-structures
+    gcc $CFLAGS src/cli.c src/bedrock.c src/end.c $LIB -lm -o build/mcbe-structures
     echo "built build/mcbe-structures"
     ;;
 test)
-    gcc $CFLAGS tests/ground_truth.c src/bedrock.c $LIB -lm -o build/ground_truth
+    gcc $CFLAGS tests/ground_truth.c src/bedrock.c src/end.c $LIB -lm -o build/ground_truth
     ./build/ground_truth
     ;;
 wasm)
     ZIG="${ZIG:-python3 -m ziglang}"
-    $ZIG cc -target wasm32-wasi -O3 -s -I$V -Isrc -w -mexec-model=reactor \
+    $ZIG cc -target wasm32-wasi -O3 -ffp-contract=off -s -I$V -Isrc -w -mexec-model=reactor \
         -Wl,--export=wasm_setup -Wl,--export=wasm_available -Wl,--export=wasm_scan \
         -Wl,--export=wasm_buffer -Wl,--export=wasm_biome_grid -Wl,--export=wasm_biome_rgba \
-        src/wasm.c src/bedrock.c $LIB -o web/engine.wasm
+        src/wasm.c src/bedrock.c src/end.c $LIB -o web/engine.wasm
     ls -l web/engine.wasm
     ;;
 page)

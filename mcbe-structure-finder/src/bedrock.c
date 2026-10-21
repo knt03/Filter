@@ -4,71 +4,22 @@
 // mc-mapper: github.com/BrendonKing32/mc-mapper) に揃えている。
 #include "bedrock.h"
 
+#include <limits.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "end.h"
 #include "finders.h"
 #include "generator.h"
+#include "mt.h"
 
-static Generator g;         // 地上
-static Generator g_end;     // エンド
+static Generator g;  // 地上
 static int g_mc;
+static int g_old_nether_fossil;  // 1.21.90 より前のネザーの化石の規則
 static uint64_t g_seed;
 static uint32_t g_seed32;  // MT を使う配置は seed の下位 32 ビットだけで決まる
 static uint32_t g_chunk_a, g_chunk_b;  // チャンク単位の乱数に使う係数
-
-// --- メルセンヌ・ツイスタ (MT19937) ---
-// 先頭の数個の出力だけを作る。i 番目の出力には状態 i, i+1, i+397 が要る。
-typedef struct { uint32_t s[624]; int i; } MT;
-
-static void mt_seed(MT *mt, uint32_t seed, int n)
-{
-    mt->s[0] = seed;
-    for (int k = 1; k < n + 397; k++)
-        mt->s[k] = 1812433253u * (mt->s[k - 1] ^ (mt->s[k - 1] >> 30)) + (uint32_t)k;
-    mt->i = 0;
-}
-
-static uint32_t mt_twist(uint32_t a, uint32_t b, uint32_t c)
-{
-    uint32_t y = (a & 0x80000000u) | (b & 0x7fffffffu);
-    return c ^ (y >> 1) ^ ((y & 1) ? 0x9908b0dfu : 0);
-}
-
-static uint32_t mt_temper(uint32_t y)
-{
-    y ^= y >> 11;
-    y ^= (y << 7) & 0x9d2c5680u;
-    y ^= (y << 15) & 0xefc60000u;
-    return y ^ (y >> 18);
-}
-
-static uint32_t mt_next(MT *mt)
-{
-    int k = mt->i++;
-    return mt_temper(mt_twist(mt->s[k], mt->s[k + 1], mt->s[k + 397]));
-}
-
-// 624 個より多く引くとき用 (状態を更新しながら何個でも作る)
-static void mt_seed_full(MT *mt, uint32_t seed)
-{
-    mt_seed(mt, seed, 624 - 397);
-    mt->i = 624;
-}
-
-static uint32_t mt_next_full(MT *mt)
-{
-    if (mt->i >= 624) {
-        for (int k = 0; k < 624; k++)
-            mt->s[k] = mt_twist(mt->s[k], mt->s[(k + 1) % 624], mt->s[(k + 397) % 624]);
-        mt->i = 0;
-    }
-    return mt_temper(mt->s[mt->i++]);
-}
-
-static int mt_int(MT *mt, int n) { return (int)(mt_next(mt) % (uint32_t)n); }
-static float mt_float(MT *mt) { return (float)(mt_next(mt) * 2.3283064365386963e-10); }
 
 // --- 統合版のネザーのバイオーム ---
 // Java 版 (cubiomes) とは別物。MT で作ったパーリンノイズ 2 つ (温度・湿度) を
@@ -177,7 +128,7 @@ static int nether_biome(int qx, int qz)
 }
 
 // --- 構造物ごとの設定 ---
-enum { SPREAD_UNIFORM, SPREAD_TRIANGULAR, SPREAD_JAVA, SPREAD_CHUNK, SPREAD_SPECIAL };
+enum { SPREAD_UNIFORM, SPREAD_TRIANGULAR, SPREAD_JAVA, SPREAD_CHUNK, SPREAD_SPECIAL, SPREAD_END };
 
 typedef struct {
     int salt;
@@ -214,21 +165,29 @@ static const Config CONFIGS[BE_KIND_NUM] = {
     [BE_FORTRESS]       = { 30084232, 30, 26, SPREAD_UNIFORM, Fortress, MC_1_18, BE_NETHER },
     [BE_BASTION]        = { 30084232, 30, 26, SPREAD_UNIFORM, Bastion,  MC_1_18, BE_NETHER },
     [BE_SLIME_CHUNK]    = { 0, 1, 1, SPREAD_CHUNK, 0, MC_1_18 },
+    [BE_GEODE]          = { 0, 1, 1, SPREAD_CHUNK, 0, MC_1_18 },
+    [BE_FOSSIL]         = { 0, 1, 1, SPREAD_CHUNK, 0, MC_1_18 },
+    [BE_NETHER_FOSSIL]  = { 0, 1, 1, SPREAD_CHUNK, 0, MC_1_18, BE_NETHER },
+    // エンドシティとエンドシップは end.c で同じ計算をする
+    [BE_END_CITY]       = { 10387313, 20, 9, SPREAD_END, End_City, MC_1_18, BE_END },
+    [BE_END_SHIP]       = { 10387313, 20, 9, SPREAD_END, End_City, MC_1_18, BE_END },
+    [BE_END_GATEWAY]    = { 0, 0, 0, SPREAD_SPECIAL, End_Gateway, MC_1_18, BE_END },
+    [BE_END_GATEWAY_OUTER] = { 0, 1, 1, SPREAD_CHUNK, End_Gateway, MC_1_18, BE_END },
 };
 
-int be_setup(uint64_t seed, int mc)
+int be_setup(uint64_t seed, int mc, int bv)
 {
     if (mc < MC_1_18 || mc > MC_NEWEST)
         return -1;
     g_mc = mc;
+    g_old_nether_fossil = bv ? bv < 12190 : mc <= MC_1_21_WD;
     g_seed = seed;
     g_seed32 = (uint32_t)seed;
     setupGenerator(&g, mc, 0);
     applySeed(&g, DIM_OVERWORLD, seed);
     nnoise_init(&g_temp, g_seed32);
     nnoise_init(&g_humid, g_seed32 + 1);
-    setupGenerator(&g_end, mc, 0);
-    applySeed(&g_end, DIM_END, seed);
+    end_setup(g_seed32);
     MT mt;
     mt_seed(&mt, g_seed32, 2);
     g_chunk_a = mt_next(&mt) >> 1;
@@ -462,13 +421,18 @@ static int mineshaft_chunk(int cx, int cz)
     return mt_int(&mt, 80) < far;
 }
 
+// 装飾 (feature rule) の乱数の種。salt は規則の名前を FNV-1 (64 ビット) にした下位 32 ビット。
+static uint32_t deco_seed(int cx, int cz, uint32_t salt)
+{
+    uint32_t ds = ((uint32_t)cx * (g_chunk_a | 1u) + (uint32_t)cz * (g_chunk_b | 1u)) ^ g_seed32;
+    return ((ds >> 2) + (ds << 6) + salt - 1640531527u) ^ ds;
+}
+
 // 砂漠の井戸: 装飾用の乱数でチャンクごとに 1/500。位置はチャンク内の (dx, dz)。
 static int desert_well_chunk(int cx, int cz, int *x, int *z)
 {
-    uint32_t ds = ((uint32_t)cx * (g_chunk_a | 1u) + (uint32_t)cz * (g_chunk_b | 1u)) ^ g_seed32;
-    ds = ((ds >> 2) + (ds << 6) + (uint32_t)-1160484816 - 1640531527u) ^ ds;
     MT mt;
-    mt_seed(&mt, ds, 3);
+    mt_seed(&mt, deco_seed(cx, cz, 3134482480u), 3);
     if (mt_int(&mt, 500) != 0)
         return 0;
     int dz = mt_int(&mt, 16);
@@ -486,34 +450,123 @@ static int slime_chunk(int cx, int cz)
     return mt_next(&mt) % 10 == 0;
 }
 
+// ジオード: 24 チャンクに 1 つ。バイオームは問わない。中心の高さまで決まる。
+static int geode_chunk(int cx, int cz, int *y)
+{
+    MT mt;
+    mt_seed(&mt, deco_seed(cx, cz, 1974035328u), 2);
+    if (mt_int(&mt, 24) != 0)
+        return 0;
+    *y = -58 + mt_int(&mt, 88) + 5;
+    return 1;
+}
+
+// 化石: 石炭の化石と深層岩の化石 (ダイヤモンド鉱石入り) が、それぞれ 64 チャンクに 1 つ。
+// 砂漠か沼地 (深層岩の化石は 1.21.60 からマングローブの沼地も) だけ。
+// バイオームはチャンクの角の地表で見る。
+static int fossil_hits(int cx, int cz, Sink *s)
+{
+    static const uint32_t SALT[2] = { 2116138073u, 877307113u };
+    int biome = -1;
+    for (int t = 0; t < 2; t++) {
+        MT mt;
+        mt_seed(&mt, deco_seed(cx, cz, SALT[t]), 2);
+        if (mt_int(&mt, 64) != 0)
+            continue;
+        int ry = t ? -64 + mt_int(&mt, 56) : mt_int(&mt, 320);
+        if (biome < 0)
+            biome = getBiomeAt(&g, 4, cx * 4, 319 >> 2, cz * 4);
+        if (biome != desert && biome != swamp && !(t && biome == mangrove_swamp && g_mc > MC_1_21_WD))
+            continue;
+        if (!sink_add_info(s, cx * 16 + 8, cz * 16 + 8, biome, t | (ry + 64) << 1))
+            return 0;
+    }
+    return 1;
+}
+
+// ネザーの化石: ソウルサンドの谷だけ。1.21.90 から確率と高さの規則が変わった。
+// (x, z) は化石の骨の角のどれか。化石は y から下に落ちて地面に乗る。
+static int nether_fossil_chunk(int cx, int cz, int *x, int *z, int *y)
+{
+    MT mt;
+    mt_seed(&mt, deco_seed(cx, cz, 4277440457u), 4);
+    if (g_old_nether_fossil ? mt_int(&mt, 6) >= 2 : mt_int(&mt, 2) >= 1)
+        return 0;
+    *x = cx * 16 + mt_int(&mt, 16);
+    *z = cz * 16 + mt_int(&mt, 16);
+    *y = g_old_nether_fossil ? mt_int(&mt, 124) : 32 + mt_int(&mt, 93);
+    return nether_biome(*x >> 2, *z >> 2) == soul_sand_valley;
+}
+
+// チャンク (cx, cz) にできるものを s に書く。s が一杯になったら 0。
+static int chunk_hits(int kind, int cx, int cz, Sink *s)
+{
+    int x, y, z;
+    switch (kind) {
+    case BE_MINESHAFT:
+        return !mineshaft_chunk(cx, cz) || sink_add(s, cx * 16 + 8, cz * 16 + 8, surface_biome(cx, cz));
+    case BE_SLIME_CHUNK:
+        return !slime_chunk(cx, cz) || sink_add(s, cx * 16 + 8, cz * 16 + 8, -1);
+    case BE_DESERT_WELL:
+        if (!desert_well_chunk(cx, cz, &x, &z) || getBiomeAt(&g, 4, x >> 2, 319 >> 2, z >> 2) != desert)
+            return 1;
+        return sink_add(s, x, z, desert);
+    case BE_GEODE:
+        return !geode_chunk(cx, cz, &y) || sink_add_info(s, cx * 16 + 5, cz * 16 + 5, -1, y);
+    case BE_FOSSIL:
+        return fossil_hits(cx, cz, s);
+    case BE_NETHER_FOSSIL:
+        return !nether_fossil_chunk(cx, cz, &x, &z, &y) || sink_add_info(s, x, z, soul_sand_valley, y);
+    case BE_END_GATEWAY_OUTER:
+        return !end_gateway(cx, cz, &x, &y, &z) || sink_add_info(s, x, z, -1, y);
+    }
+    return 1;
+}
+
 static int scan_chunks(int kind, Sink *s, int part, int nparts)
 {
-    int cx0 = s->x0 >> 4, cx1 = s->x1 >> 4;
+    // 外側の島のエンドゲートウェイは隣のチャンク (+x, +z) にはみ出すことがある
+    int lo = kind == BE_END_GATEWAY_OUTER;
+    int cx0 = (s->x0 >> 4) - lo, cx1 = s->x1 >> 4;
     int cza, czb;
-    band(s->z0 >> 4, s->z1 >> 4, part, nparts, &cza, &czb);
-    for (int cz = cza; cz <= czb; cz++)
-        for (int cx = cx0; cx <= cx1; cx++) {
-            if (kind == BE_MINESHAFT) {
-                if (!mineshaft_chunk(cx, cz))
-                    continue;
-                if (!sink_add(s, cx * 16 + 8, cz * 16 + 8, surface_biome(cx, cz)))
+    band((s->z0 >> 4) - lo, s->z1 >> 4, part, nparts, &cza, &czb);
+    // 幅 32 チャンクの縦の帯ごとに進むと、エンドの地形を覚えておく表 (end.c) に収まる
+    for (int sx = cx0; sx <= cx1; sx += 32)
+        for (int cz = cza; cz <= czb; cz++)
+            for (int cx = sx; cx <= cx1 && cx < sx + 32; cx++)
+                if (!chunk_hits(kind, cx, cz, s))
                     return 0;
-            } else if (kind == BE_SLIME_CHUNK) {
-                if (!slime_chunk(cx, cz))
-                    continue;
-                if (!sink_add(s, cx * 16 + 8, cz * 16 + 8, -1))
-                    return 0;
-            } else {
-                int x, z;
-                if (!desert_well_chunk(cx, cz, &x, &z))
-                    continue;
-                int id = getBiomeAt(&g, 4, x >> 2, 319 >> 2, z >> 2);
-                if (id != desert)
-                    continue;
-                if (!sink_add(s, x, z, id))
-                    return 0;
-            }
+    return 1;
+}
+
+// エンドシティ (20 チャンク四方の領域ごと) と、そのエンドシップ
+static int scan_end_cities(int kind, Sink *s, int part, int nparts)
+{
+    int blocks = CONFIGS[kind].spacing * 16;
+    int rx0 = floordiv_i(s->x0, blocks) - 1, rx1 = floordiv_i(s->x1, blocks) + 1;
+    int rz0 = floordiv_i(s->z0, blocks) - 1, rz1 = floordiv_i(s->z1, blocks) + 1;
+    int za, zb;
+    band(rz0, rz1, part, nparts, &za, &zb);
+    for (int rz = za; rz <= zb; rz++)
+        for (int rx = rx0; rx <= rx1; rx++) {
+            EndCity c;
+            if (!end_city(rx, rz, &c))
+                continue;
+            if (kind == BE_END_CITY ? !sink_add_info(s, c.x, c.z, -1, c.y)
+                                    : c.ship && !sink_add_info(s, c.ex, c.ez, -1, c.ey))
+                return 0;
         }
+    return 1;
+}
+
+static int scan_ring_gateways(Sink *s)
+{
+    for (int kill = 1; kill <= 20; kill++) {
+        int x, z;
+        end_ring_gateway(kill, &x, &z);
+        if (!sink_add_info(s, x, z, -1, kill))
+            return 0;
+    }
     return 1;
 }
 
@@ -577,8 +630,13 @@ int be_scan(int kind, int x0, int z0, int x1, int z1,
         scan_chunks(kind, &s, part, nparts);
         break;
     case SPREAD_SPECIAL:
-        if (part == 0)
+        if (part == 0 && kind == BE_STRONGHOLD)
             scan_strongholds(&s);
+        else if (part == 0)
+            scan_ring_gateways(&s);
+        break;
+    case SPREAD_END:
+        scan_end_cities(kind, &s, part, nparts);
         break;
     default:
         scan_regions(kind, &s, part, nparts);
@@ -598,7 +656,24 @@ int be_biome_grid(int dim, int x0, int z0, int w, int h, int scale, int *out)
                                               floordiv_i(z0 + j * scale + scale / 2, 4));
         return 0;
     }
-    const Generator *gen = dim == BE_END ? &g_end : &g;
+    if (dim == BE_END) {
+        // エンドは 1 つのバイオームだけなので、島の高さを Java 版のエンドのバイオームの
+        // 区切りで塗り分けて島の形を見せる
+        int lx = INT_MIN, lz = INT_MIN, id = 0;
+        for (int j = 0; j < h; j++)
+            for (int i = 0; i < w; i++) {
+                int cx = floordiv_i(x0 + i * scale + scale / 2, 16), cz = floordiv_i(z0 + j * scale + scale / 2, 16);
+                if (cx != lx || cz != lz) {
+                    float v = end_island(cx, cz);
+                    id = v > 40 ? end_highlands : v >= 0 ? end_midlands : v < -20 ? small_end_islands : end_barrens;
+                    lx = cx;
+                    lz = cz;
+                }
+                out[j * w + i] = id;
+            }
+        return 0;
+    }
+    const Generator *gen = &g;
     Range r = { scale, floordiv_i(x0, scale), floordiv_i(z0, scale), w, h, 319 >> 2, 1 };
     int *cache = allocCache(gen, r);
     if (!cache)
