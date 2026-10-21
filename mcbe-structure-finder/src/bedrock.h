@@ -35,10 +35,15 @@ enum BEKind {
     BE_KIND_NUM
 };
 
-// 1 件の結果。x, z はブロック座標、biome は cubiomes のバイオーム ID。
+// 次元
+enum BEDim { BE_OVERWORLD, BE_NETHER, BE_END, BE_DIM_NUM };
+
+// 1 件の結果。x, z はその次元のブロック座標、biome は cubiomes のバイオーム ID
+// (バイオームを持たないもの・エンドは -1)。info は種類ごとの付加情報 (bedrock.c 参照)。
 typedef struct {
     int x, z;
     int biome;
+    int info;
 } BEHit;
 
 // シード値と cubiomes のバージョン定数 (MC_1_18 以降) で初期化する。0 で成功。
@@ -47,6 +52,9 @@ int be_setup(uint64_t seed, int mc);
 // その種類がこのバージョンに存在するか。
 int be_kind_available(int kind);
 
+// その種類ができる次元 (enum BEDim)。
+int be_kind_dim(int kind);
+
 // ブロック範囲 [x0,x1]×[z0,z1] にある kind の構造物を out に書く。
 // 計算を分割して進捗を出せるよう、走査する行 (z 方向) を part/nparts 番目の
 // 帯だけに絞る (全部を一度に計算するなら part=0, nparts=1)。
@@ -54,9 +62,9 @@ int be_kind_available(int kind);
 int be_scan(int kind, int x0, int z0, int x1, int z1,
             int part, int nparts, BEHit *out, int max);
 
-// 地図用: (x0, z0) から scale ブロックごとに w×h 個の地表のバイオーム ID を out に書く。
-// scale は 4, 16, 64, 256 のどれか。0 で成功。
-int be_biome_grid(int x0, int z0, int w, int h, int scale, int *out);
+// 地図用: 次元 dim の (x0, z0) から scale ブロックごとに w×h 個のバイオーム ID
+// (地上は地表のもの) を out に書く。scale は 4, 16, 64, 256 のどれか。0 で成功。
+int be_biome_grid(int dim, int x0, int z0, int w, int h, int scale, int *out);
 
 #ifdef __cplusplus
 }

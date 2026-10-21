@@ -89,10 +89,13 @@ int main(int argc, char **argv)
             rows[total++] = (Row){ k, hits[i], hypot(hits[i].x - cx, hits[i].z - cz) };
     }
     qsort(rows, total, sizeof(Row), by_distance);
-    printf("種類,X,Z,距離,バイオーム\n");
-    for (int i = 0; i < total; i++)
-        printf("%s,%d,%d,%.0f,%s\n", KIND_NAMES[rows[i].kind], rows[i].hit.x, rows[i].hit.z,
-               rows[i].dist, biome2str(mc, rows[i].hit.biome));
+    static const char *DIM_NAMES[BE_DIM_NUM] = { "オーバーワールド", "ネザー", "エンド" };
+    printf("種類,次元,X,Z,距離,バイオーム\n");
+    for (int i = 0; i < total; i++) {
+        const BEHit *h = &rows[i].hit;
+        printf("%s,%s,%d,%d,%.0f,%s\n", KIND_NAMES[rows[i].kind], DIM_NAMES[be_kind_dim(rows[i].kind)],
+               h->x, h->z, rows[i].dist, h->biome >= 0 ? biome2str(mc, h->biome) : "");
+    }
     free(hits);
     free(rows);
     return 0;

@@ -118,6 +118,18 @@ form { display: grid; gap: 12px; }
 .bar { height: 4px; border-radius: 2px; background: var(--sunk); overflow: hidden; }
 .bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 0.15s; }
 
+/* 次元の切り替え */
+.dims {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px;
+  padding: 4px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--sunk);
+}
+.dims button {
+  min-height: 40px; border: 0; border-radius: 7px; background: transparent; cursor: pointer;
+  display: flex; align-items: baseline; justify-content: center; gap: 6px; font-weight: 700; color: var(--muted);
+}
+.dims button[aria-selected="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgb(0 0 0 / 0.12); }
+.dims .n { font: 500 12px/1 var(--font-num); color: var(--muted); font-variant-numeric: tabular-nums; }
+
 /* 種類ごとの件数 (絞り込みを兼ねる凡例) */
 .groups { display: grid; gap: 10px; }
 .group { display: grid; gap: 6px; }
@@ -254,6 +266,8 @@ form { display: grid; gap: 12px; }
       <div class="status" id="status" role="status">準備中…</div>
     </form>
 
+    <div class="dims" id="dims" role="tablist" aria-label="次元"></div>
+
     <section class="panel" aria-labelledby="kinds-h">
       <div class="ledger-head">
         <span class="label" id="kinds-h">種類（タップで表示を切り替え）</span>
@@ -276,6 +290,7 @@ form { display: grid; gap: 12px; }
       </div>
       <div class="pick" id="pick" hidden></div>
       <p class="map-note">上が北（Z−）、右が東（X＋）。＋印が原点。地図をタップすると近くの構造物を表示します。</p>
+      <p class="map-note" id="map-hint" hidden>スライムチャンクは、地図を拡大すると塗って表示します。</p>
     </section>
   </div>
 

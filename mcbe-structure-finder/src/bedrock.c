@@ -11,7 +11,9 @@
 #include "finders.h"
 #include "generator.h"
 
-static Generator g;
+static Generator g;         // 地上
+static Generator g_nether;  // ネザー
+static Generator g_end;     // エンド
 static int g_mc;
 static uint64_t g_seed;
 static uint32_t g_seed32;  // MT を使う配置は seed の下位 32 ビットだけで決まる
@@ -53,6 +55,7 @@ typedef struct {
     int spread;
     int cubiomes;  // cubiomes の StructureType (バイオーム判定・Java 配置に使う)
     int min_mc;
+    int dim;       // enum BEDim (省略は地上)
 } Config;
 
 static const Config CONFIGS[BE_KIND_NUM] = {
@@ -87,6 +90,10 @@ int be_setup(uint64_t seed, int mc)
     g_seed32 = (uint32_t)seed;
     setupGenerator(&g, mc, 0);
     applySeed(&g, DIM_OVERWORLD, seed);
+    setupGenerator(&g_nether, mc, 0);
+    applySeed(&g_nether, DIM_NETHER, seed);
+    setupGenerator(&g_end, mc, 0);
+    applySeed(&g_end, DIM_END, seed);
     MT mt;
     mt_seed(&mt, g_seed32, 2);
     g_chunk_a = mt_next(&mt) >> 1;
@@ -97,6 +104,11 @@ int be_setup(uint64_t seed, int mc)
 int be_kind_available(int kind)
 {
     return kind >= 0 && kind < BE_KIND_NUM && g_mc >= CONFIGS[kind].min_mc;
+}
+
+int be_kind_dim(int kind)
+{
+    return kind >= 0 && kind < BE_KIND_NUM ? CONFIGS[kind].dim : -1;
 }
 
 // --- 位置の計算 ---
@@ -199,18 +211,18 @@ static int floordiv_i(int a, int b) { return a >= 0 ? a / b : -((-a + b - 1) / b
 
 typedef struct { BEHit *out; int max, n; int x0, z0, x1, z1; } Sink;
 
-static int sink_add(Sink *s, int x, int z, int biome)
+static int sink_add_info(Sink *s, int x, int z, int biome, int info)
 {
     if (x < s->x0 || x > s->x1 || z < s->z0 || z > s->z1)
         return 1;
     if (s->n >= s->max)
         return 0;
-    s->out[s->n].x = x;
-    s->out[s->n].z = z;
-    s->out[s->n].biome = biome;
+    s->out[s->n] = (BEHit){ x, z, biome, info };
     s->n++;
     return 1;
 }
+
+static int sink_add(Sink *s, int x, int z, int biome) { return sink_add_info(s, x, z, biome, 0); }
 
 // 行範囲 [lo, hi] を nparts 個に分けたうちの part 番目
 static void band(int lo, int hi, int part, int nparts, int *a, int *b)
@@ -401,14 +413,16 @@ int be_scan(int kind, int x0, int z0, int x1, int z1,
     return s.n;
 }
 
-int be_biome_grid(int x0, int z0, int w, int h, int scale, int *out)
+int be_biome_grid(int dim, int x0, int z0, int w, int h, int scale, int *out)
 {
-    // scale (4/16/64/256) ブロックごとの地表のバイオーム。x0, z0 はブロック座標。
+    // scale (4/16/64/256) ブロックごとのバイオーム。x0, z0 はブロック座標。
+    // 地上は y=319 で取って地表のバイオームにする。
+    const Generator *gen = dim == BE_NETHER ? &g_nether : dim == BE_END ? &g_end : &g;
     Range r = { scale, floordiv_i(x0, scale), floordiv_i(z0, scale), w, h, 319 >> 2, 1 };
-    int *cache = allocCache(&g, r);
+    int *cache = allocCache(gen, r);
     if (!cache)
         return -1;
-    int err = genBiomes(&g, cache, r);
+    int err = genBiomes(gen, cache, r);
     if (!err)
         memcpy(out, cache, sizeof(int) * (size_t)w * (size_t)h);
     free(cache);
