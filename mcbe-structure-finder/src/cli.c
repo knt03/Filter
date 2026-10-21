@@ -14,7 +14,8 @@ static const char *KIND_NAMES[BE_KIND_NUM] = {
     "村", "砂漠のピラミッド", "ジャングルの寺院", "ウィッチの小屋", "イグルー",
     "海底神殿", "森の洋館", "ピリジャーの前哨基地", "難破船", "海底遺跡",
     "埋もれた宝", "荒廃したポータル", "古代都市", "旅路の遺跡", "試練の間",
-    "放棄されたキャンプ", "廃坑", "要塞", "砂漠の井戸",
+    "放棄されたキャンプ", "廃坑", "要塞", "砂漠の井戸", "ネザー要塞",
+    "砦の遺跡", "スライムチャンク",
 };
 
 typedef struct { int kind; BEHit hit; double dist; } Row;
@@ -84,9 +85,15 @@ int main(int argc, char **argv)
     for (int k = 0; k < BE_KIND_NUM; k++) {
         if (!want[k] || !be_kind_available(k))
             continue;
-        int n = be_scan(k, cx - range, cz - range, cx + range, cz + range, 0, 1, hits, MAX - total);
+        // ネザーは地上の 1/8 の座標なので、中心も 1/8 にする
+        int dx = cx, dz = cz;
+        if (be_kind_dim(k) == BE_NETHER) {
+            dx = (int)floor(cx / 8.0);
+            dz = (int)floor(cz / 8.0);
+        }
+        int n = be_scan(k, dx - range, dz - range, dx + range, dz + range, 0, 1, hits, MAX - total);
         for (int i = 0; i < n; i++)
-            rows[total++] = (Row){ k, hits[i], hypot(hits[i].x - cx, hits[i].z - cz) };
+            rows[total++] = (Row){ k, hits[i], hypot(hits[i].x - dx, hits[i].z - dz) };
     }
     qsort(rows, total, sizeof(Row), by_distance);
     static const char *DIM_NAMES[BE_DIM_NUM] = { "オーバーワールド", "ネザー", "エンド" };

@@ -12,7 +12,6 @@
 #include "generator.h"
 
 static Generator g;         // 地上
-static Generator g_nether;  // ネザー
 static Generator g_end;     // エンド
 static int g_mc;
 static uint64_t g_seed;
@@ -31,19 +30,151 @@ static void mt_seed(MT *mt, uint32_t seed, int n)
     mt->i = 0;
 }
 
-static uint32_t mt_next(MT *mt)
+static uint32_t mt_twist(uint32_t a, uint32_t b, uint32_t c)
 {
-    int k = mt->i++;
-    uint32_t y = (mt->s[k] & 0x80000000u) | (mt->s[k + 1] & 0x7fffffffu);
-    y = mt->s[k + 397] ^ (y >> 1) ^ ((y & 1) ? 0x9908b0dfu : 0);
+    uint32_t y = (a & 0x80000000u) | (b & 0x7fffffffu);
+    return c ^ (y >> 1) ^ ((y & 1) ? 0x9908b0dfu : 0);
+}
+
+static uint32_t mt_temper(uint32_t y)
+{
     y ^= y >> 11;
     y ^= (y << 7) & 0x9d2c5680u;
     y ^= (y << 15) & 0xefc60000u;
     return y ^ (y >> 18);
 }
 
+static uint32_t mt_next(MT *mt)
+{
+    int k = mt->i++;
+    return mt_temper(mt_twist(mt->s[k], mt->s[k + 1], mt->s[k + 397]));
+}
+
+// 624 個より多く引くとき用 (状態を更新しながら何個でも作る)
+static void mt_seed_full(MT *mt, uint32_t seed)
+{
+    mt_seed(mt, seed, 624 - 397);
+    mt->i = 624;
+}
+
+static uint32_t mt_next_full(MT *mt)
+{
+    if (mt->i >= 624) {
+        for (int k = 0; k < 624; k++)
+            mt->s[k] = mt_twist(mt->s[k], mt->s[(k + 1) % 624], mt->s[(k + 397) % 624]);
+        mt->i = 0;
+    }
+    return mt_temper(mt->s[mt->i++]);
+}
+
 static int mt_int(MT *mt, int n) { return (int)(mt_next(mt) % (uint32_t)n); }
 static float mt_float(MT *mt) { return (float)(mt_next(mt) * 2.3283064365386963e-10); }
+
+// --- 統合版のネザーのバイオーム ---
+// Java 版 (cubiomes) とは別物。MT で作ったパーリンノイズ 2 つ (温度・湿度) を
+// 高さによらず 2 次元で取り、5 つのバイオームの基準点のうち一番近いものになる。
+// 実機のワールドデータのバイオームと 4×4 ブロックの区画の中心で全部一致する。
+typedef struct { double a, b, c, amp, lac; uint8_t d[512]; } NPerlin;
+typedef struct { NPerlin oct[4]; } NNoise;  // 2 オクターブ × 2 組
+static NNoise g_temp, g_humid;
+
+static void nperlin_init(NPerlin *p, MT *mt)
+{
+    p->a = (double)(float)(mt_next_full(mt) * 2.3283064365386963e-10) * 256.0;
+    p->b = (double)(float)(mt_next_full(mt) * 2.3283064365386963e-10) * 256.0;
+    p->c = (double)(float)(mt_next_full(mt) * 2.3283064365386963e-10) * 256.0;
+    for (int i = 0; i < 256; i++)
+        p->d[i] = (uint8_t)i;
+    for (int i = 0; i < 256; i++) {
+        int j = (int)(mt_next_full(mt) % (uint32_t)(256 - i)) + i;
+        uint8_t t = p->d[i];
+        p->d[i] = p->d[j];
+        p->d[j] = t;
+    }
+    memcpy(p->d + 256, p->d, 256);
+}
+
+static double ngrad(int h, double x, double y, double z)
+{
+    switch (h & 15) {
+    case 0: return x + y;   case 1: return -x + y;  case 2: return x - y;   case 3: return -x - y;
+    case 4: return x + z;   case 5: return -x + z;  case 6: return x - z;   case 7: return -x - z;
+    case 8: return y + z;   case 9: return -y + z;  case 10: return y - z;  case 11: return -y - z;
+    case 12: return x + y;  case 13: return -y + z; case 14: return -x + y; default: return -y - z;
+    }
+}
+
+static double nlerp(double t, double a, double b) { return a + t * (b - a); }
+static double nfade(double t) { return t * t * t * (t * (t * 6.0 - 15.0) + 10.0); }
+
+static double nperlin_sample(const NPerlin *p, double x, double y, double z)
+{
+    x += p->a;
+    y += p->b;
+    z += p->c;
+    int ix = (int)floor(x), iy = (int)floor(y), iz = (int)floor(z);
+    double fx = x - ix, fy = y - iy, fz = z - iz;
+    const uint8_t *d = p->d;
+    int X = ix & 255, Y = iy & 255, Z = iz & 255;
+    int i = d[X], j = d[X + 1];
+    int k = d[(i + Y) & 255], l = d[(i + Y + 1) & 255];
+    int m = d[(j + Y) & 255], n = d[(j + Y + 1) & 255];
+    double u = nfade(fx), v = nfade(fy), w = nfade(fz);
+    double e0 = nlerp(u, ngrad(d[(k + Z) & 255], fx, fy, fz), ngrad(d[(m + Z) & 255], fx - 1, fy, fz));
+    double e1 = nlerp(u, ngrad(d[(l + Z) & 255], fx, fy - 1, fz), ngrad(d[(n + Z) & 255], fx - 1, fy - 1, fz));
+    double e2 = nlerp(u, ngrad(d[(k + Z + 1) & 255], fx, fy, fz - 1), ngrad(d[(m + Z + 1) & 255], fx - 1, fy, fz - 1));
+    double e3 = nlerp(u, ngrad(d[(l + Z + 1) & 255], fx, fy - 1, fz - 1), ngrad(d[(n + Z + 1) & 255], fx - 1, fy - 1, fz - 1));
+    return nlerp(w, nlerp(v, e0, e1), nlerp(v, e2, e3));
+}
+
+static double nwrap(double x) { return x - floor(x / 33554432.0 + 0.5) * 33554432.0; }
+
+static void nnoise_init(NNoise *n, uint32_t seed)
+{
+    MT mt;
+    mt_seed_full(&mt, seed);
+    for (int i = 0; i < 4; i++) {
+        nperlin_init(&n->oct[i], &mt);
+        n->oct[i].lac = i % 2 ? 1.0 / 128 : 1.0 / 64;
+        n->oct[i].amp = i % 2 ? 2.0 / 3 : 1.0 / 3;
+    }
+}
+
+static double nnoise_sample(const NNoise *n, double x, double z)
+{
+    double v[2] = { 0, 0 };
+    for (int i = 0; i < 4; i++) {
+        const NPerlin *p = &n->oct[i];
+        if (i == 2) {  // 2 組目は少しずらした縮尺で取る
+            x *= 337.0 / 331.0;
+            z *= 337.0 / 331.0;
+        }
+        v[i / 2] += p->amp * nperlin_sample(p, nwrap(x * p->lac), 0.0, nwrap(z * p->lac));
+    }
+    return (v[0] + v[1]) * 1.25;
+}
+
+// (qx, qz) は 4 ブロック単位の座標。戻り値は cubiomes のバイオーム ID。
+static int nether_biome(int qx, int qz)
+{
+    static const float P[5][3] = {
+        { 0, 0, 0 }, { 0, -0.5f, 0 }, { 0.4f, 0, 0 },
+        { 0, 0.5f, 0.375f * 0.375f }, { -0.5f, 0, 0.175f * 0.175f },
+    };
+    static const int ID[5] = { nether_wastes, soul_sand_valley, crimson_forest, warped_forest, basalt_deltas };
+    float t = (float)nnoise_sample(&g_temp, qx, qz);
+    float h = (float)nnoise_sample(&g_humid, qx, qz);
+    int best = 0;
+    float dmin = INFINITY;
+    for (int i = 0; i < 5; i++) {
+        float dt = P[i][0] - t, dh = P[i][1] - h, d = dt * dt + dh * dh + P[i][2];
+        if (d < dmin) {
+            dmin = d;
+            best = i;
+        }
+    }
+    return ID[best];
+}
 
 // --- 構造物ごとの設定 ---
 enum { SPREAD_UNIFORM, SPREAD_TRIANGULAR, SPREAD_JAVA, SPREAD_CHUNK, SPREAD_SPECIAL };
@@ -79,6 +210,10 @@ static const Config CONFIGS[BE_KIND_NUM] = {
     [BE_MINESHAFT]      = { 0, 1, 1, SPREAD_CHUNK, Mineshaft,     MC_1_18 },
     [BE_STRONGHOLD]     = { 0, 0, 0, SPREAD_SPECIAL, Stronghold,  MC_1_18 },
     [BE_DESERT_WELL]    = { 0, 1, 1, SPREAD_CHUNK, Desert_Well,   MC_1_18 },
+    // ネザー要塞と砦の遺跡は同じ候補の位置を取り合う (nether_complex)
+    [BE_FORTRESS]       = { 30084232, 30, 26, SPREAD_UNIFORM, Fortress, MC_1_18, BE_NETHER },
+    [BE_BASTION]        = { 30084232, 30, 26, SPREAD_UNIFORM, Bastion,  MC_1_18, BE_NETHER },
+    [BE_SLIME_CHUNK]    = { 0, 1, 1, SPREAD_CHUNK, 0, MC_1_18 },
 };
 
 int be_setup(uint64_t seed, int mc)
@@ -90,8 +225,8 @@ int be_setup(uint64_t seed, int mc)
     g_seed32 = (uint32_t)seed;
     setupGenerator(&g, mc, 0);
     applySeed(&g, DIM_OVERWORLD, seed);
-    setupGenerator(&g_nether, mc, 0);
-    applySeed(&g_nether, DIM_NETHER, seed);
+    nnoise_init(&g_temp, g_seed32);
+    nnoise_init(&g_humid, g_seed32 + 1);
     setupGenerator(&g_end, mc, 0);
     applySeed(&g_end, DIM_END, seed);
     MT mt;
@@ -113,12 +248,19 @@ int be_kind_dim(int kind)
 
 // --- 位置の計算 ---
 
+static int floordiv_i(int a, int b) { return a >= 0 ? a / b : -((-a + b - 1) / b); }
+
+static uint32_t region_seed(const Config *c, int rx, int rz)
+{
+    return (uint32_t)((uint64_t)(int64_t)rx * 341873128712ull
+                    + (uint64_t)(int64_t)rz * 132897987541ull
+                    + g_seed + (uint64_t)(int64_t)c->salt);
+}
+
 // 領域 (rx, rz) の生成候補のチャンク座標。
 static void region_chunk(const Config *c, int rx, int rz, int *cx, int *cz)
 {
-    uint32_t rs = (uint32_t)((uint64_t)(int64_t)rx * 341873128712ull
-                           + (uint64_t)(int64_t)rz * 132897987541ull
-                           + g_seed + (uint64_t)(int64_t)c->salt);
+    uint32_t rs = region_seed(c, rx, rz);
     MT mt;
     if (c->spread == SPREAD_TRIANGULAR) {
         // 大きな構造物は 2 回引いた平均で、領域の中央に寄る
@@ -165,7 +307,24 @@ static int is_outpost_biome(int id)
         || id == sunflower_plains;
 }
 
-static int viable(int kind, int cx, int cz, int *biome)
+// ネザー要塞か砦の遺跡か。候補の位置 (X, Z) の次の乱数で 6 回に 2 回が要塞になる。
+// 砦の遺跡は玄武岩の三角州にはできず、Java 版と違って要塞にも変わらない (何もできない)。
+// 砦の遺跡ならさらに向き・形 (*type) を引く。戻り値は BE_FORTRESS / BE_BASTION / -1。
+static int nether_complex(int cx, int cz, int biome, int *type)
+{
+    const Config *c = &CONFIGS[BE_FORTRESS];
+    MT mt;
+    mt_seed(&mt, region_seed(c, floordiv_i(cx, c->spacing), floordiv_i(cz, c->spacing)), 5);
+    mt_next(&mt);
+    mt_next(&mt);
+    if (mt_int(&mt, 6) < 2)
+        return BE_FORTRESS;
+    mt_next(&mt);  // 向き
+    *type = mt_int(&mt, 4);
+    return biome == basalt_deltas ? -1 : BE_BASTION;
+}
+
+static int viable(int kind, int cx, int cz, int *biome, int *info)
 {
     const Config *c = &CONFIGS[kind];
     int x = cx * 16 + 8, z = cz * 16 + 8;
@@ -194,6 +353,10 @@ static int viable(int kind, int cx, int cz, int *biome)
     case BE_RUINED_PORTAL:
         *biome = surface_biome(cx, cz);
         return 1;
+    case BE_FORTRESS:
+    case BE_BASTION:
+        *biome = nether_biome(cx * 4 + 2, cz * 4 + 2);
+        return nether_complex(cx, cz, *biome, info) == kind;
     case BE_ANCIENT_CITY:
         // ディープダークは地下にあるので古代都市の基準の高さ (y=-27) で見る。
         // 表示するのは探すときに目印になる地表のバイオーム。
@@ -206,8 +369,6 @@ static int viable(int kind, int cx, int cz, int *biome)
 }
 
 // --- 走査 ---
-
-static int floordiv_i(int a, int b) { return a >= 0 ? a / b : -((-a + b - 1) / b); }
 
 typedef struct { BEHit *out; int max, n; int x0, z0, x1, z1; } Sink;
 
@@ -242,14 +403,14 @@ static int scan_regions(int kind, Sink *s, int part, int nparts)
     band(rz0, rz1, part, nparts, &za, &zb);
     for (int rz = za; rz <= zb; rz++)
         for (int rx = rx0; rx <= rx1; rx++) {
-            int cx, cz, biome;
+            int cx, cz, biome, info = 0;
             region_chunk(c, rx, rz, &cx, &cz);
             int x = cx * 16 + 8, z = cz * 16 + 8;
             if (x < s->x0 || x > s->x1 || z < s->z0 || z > s->z1)
                 continue;
-            if (!viable(kind, cx, cz, &biome))
+            if (!viable(kind, cx, cz, &biome, &info))
                 continue;
-            if (!sink_add(s, x, z, biome))
+            if (!sink_add_info(s, x, z, biome, info))
                 return 0;
         }
     return 1;
@@ -317,6 +478,14 @@ static int desert_well_chunk(int cx, int cz, int *x, int *z)
     return 1;
 }
 
+// スライムチャンク: チャンク座標だけで決まり、ワールドのシード値は使わない (10 個に 1 個)
+static int slime_chunk(int cx, int cz)
+{
+    MT mt;
+    mt_seed(&mt, (uint32_t)cx * 0x1f1f1f1fu ^ (uint32_t)cz, 1);
+    return mt_next(&mt) % 10 == 0;
+}
+
 static int scan_chunks(int kind, Sink *s, int part, int nparts)
 {
     int cx0 = s->x0 >> 4, cx1 = s->x1 >> 4;
@@ -328,6 +497,11 @@ static int scan_chunks(int kind, Sink *s, int part, int nparts)
                 if (!mineshaft_chunk(cx, cz))
                     continue;
                 if (!sink_add(s, cx * 16 + 8, cz * 16 + 8, surface_biome(cx, cz)))
+                    return 0;
+            } else if (kind == BE_SLIME_CHUNK) {
+                if (!slime_chunk(cx, cz))
+                    continue;
+                if (!sink_add(s, cx * 16 + 8, cz * 16 + 8, -1))
                     return 0;
             } else {
                 int x, z;
@@ -417,7 +591,14 @@ int be_biome_grid(int dim, int x0, int z0, int w, int h, int scale, int *out)
 {
     // scale (4/16/64/256) ブロックごとのバイオーム。x0, z0 はブロック座標。
     // 地上は y=319 で取って地表のバイオームにする。
-    const Generator *gen = dim == BE_NETHER ? &g_nether : dim == BE_END ? &g_end : &g;
+    if (dim == BE_NETHER) {
+        for (int j = 0; j < h; j++)
+            for (int i = 0; i < w; i++)
+                out[j * w + i] = nether_biome(floordiv_i(x0 + i * scale + scale / 2, 4),
+                                              floordiv_i(z0 + j * scale + scale / 2, 4));
+        return 0;
+    }
+    const Generator *gen = dim == BE_END ? &g_end : &g;
     Range r = { scale, floordiv_i(x0, scale), floordiv_i(z0, scale), w, h, 319 >> 2, 1 };
     int *cache = allocCache(gen, r);
     if (!cache)

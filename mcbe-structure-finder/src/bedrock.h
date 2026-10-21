@@ -32,6 +32,9 @@ enum BEKind {
     BE_MINESHAFT,        // 廃坑
     BE_STRONGHOLD,       // 要塞 (村の下に必ずできる 3 つ)
     BE_DESERT_WELL,      // 砂漠の井戸
+    BE_FORTRESS,         // ネザー要塞
+    BE_BASTION,          // 砦の遺跡 (info: 0 橋, 1 宝物庫, 2 ホグリン小屋, 3 住居)
+    BE_SLIME_CHUNK,      // スライムチャンク (シード値によらない)
     BE_KIND_NUM
 };
 

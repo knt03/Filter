@@ -31,7 +31,13 @@ const KINDS = [
   { name: '廃坑', group: 3, conf: 'est', y: '地下', noisy: true, parts: 24 },
   { name: '要塞', main: true, group: 3, conf: 'part', y: '地下', big: true },
   { name: '砂漠の井戸', group: 4, conf: 'ref', y: '地上', parts: 24 },
+  { name: 'ネザー要塞', main: true, group: 5, conf: 'ok', dim: 1, y: 'Y 48〜70 付近' },
+  { name: '砦の遺跡', main: true, group: 5, conf: 'ok', dim: 1, y: 'Y 30〜90 付近', shape: 'circle', color: '--g1',
+    info: (t) => `形: ${BASTIONS[t]}` },
+  { name: 'スライムチャンク', group: 4, conf: 'ok', y: 'Y 39 以下（明るさに関係なく湧く）', color: '--g3',
+    chunk: true, lazy: true, parts: 24 },
 ];
+const BASTIONS = ['橋', '宝物庫', 'ホグリン小屋', '住居'];
 // 種類のまとまり。印の形と色はまとまりごと (種類の shape / color で上書きできる)
 const GROUPS = [
   { name: '集落', shape: 'circle', color: '--g1' },
@@ -46,6 +52,8 @@ const GROUPS = [
 ];
 const BADGE = { est: '推定', part: '3つだけ', ref: '参考' };
 const dimOf = (k) => KINDS[k].dim || 0;
+// 種類が 1 つもない次元はタブを出さない
+const hasKinds = (d) => KINDS.some((_, k) => dimOf(k) === d);
 const shapeOf = (k) => KINDS[k].shape || GROUPS[KINDS[k].group].shape;
 const colorVar = (k) => KINDS[k].color || GROUPS[KINDS[k].group].color;
 // 件数が多すぎて一覧が埋まるので最初は隠しておく種類
@@ -79,6 +87,7 @@ const BIOMES = {
   178: '林', 179: '雪の斜面', 180: '尖った山頂', 181: '凍った山頂', 182: '石の山頂',
   183: 'ディープダーク', 184: 'マングローブの沼地', 185: 'サクラの林', 186: 'ペールガーデン',
   187: 'Sulfur Caves', 188: 'Dappled Forest',
+  8: 'ネザーの荒地', 170: 'ソウルサンドの谷', 171: '真紅の森', 172: '歪んだ森', 173: '玄武岩の三角州',
 };
 const biomeName = (id) => BIOMES[id] || `バイオーム ${id}`;
 const escapeHtml = (s) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -281,6 +290,7 @@ function markHtml(kind) {
 // --- 次元の切り替え ---
 function renderDims() {
   $('dims').innerHTML = DIMS.map((d, i) => {
+    if (!hasKinds(i)) return '';
     let n = 0;
     for (const k of state.enabled) if (dimOf(k) === i) n += state.hits[k].length;
     return `<button type="button" role="tab" data-dim="${i}" aria-selected="${state.dim === i}">${d.tab}<span class="n">${state.seed === null ? '' : fmt.format(n)}</span></button>`;
@@ -313,7 +323,8 @@ function chipCount(i) {
 
 function renderChips() {
   const box = $('groups');
-  box.innerHTML = GROUPS.map((g, gi) => ({ g, gi })).filter(({ g }) => (g.dim || 0) === state.dim).map(({ g, gi }) => {
+  box.innerHTML = GROUPS.map((g, gi) => ({ g, gi }))
+    .filter(({ g, gi }) => (g.dim || 0) === state.dim && KINDS.some((k) => k.group === gi)).map(({ g, gi }) => {
     const chips = KINDS.map((k, i) => ({ k, i })).filter(({ k }) => k.group === gi).map(({ k, i }) => {
       const missing = state.missing.has(i);
       const badge = BADGE[k.conf] ? `<span class="badge">${BADGE[k.conf]}</span>` : '';
@@ -792,7 +803,8 @@ function select(h, center) {
     map.vx = h.x;
     map.vz = h.z;
     const { w } = canvasSize();
-    map.bpp = Math.min(map.bpp, 1500 / w);
+    // チャンク単位の種類は塗って見える倍率まで寄せる
+    map.bpp = Math.min(map.bpp, k.chunk ? 2 : 1500 / w);
     requestFine();
     map.canvas.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
@@ -930,7 +942,7 @@ async function main() {
     for (let k = known; k < KINDS.length; k++) if (!NOISY.has(k)) state.enabled.add(k);
   }
   const savedDim = Number(store.get('mcbe.dim'));
-  if (savedDim > 0 && savedDim < DIMS.length) state.dim = savedDim;
+  if (savedDim > 0 && savedDim < DIMS.length && hasKinds(savedDim)) state.dim = savedDim;
   renderDims();
   renderChips();
   fitMap();
